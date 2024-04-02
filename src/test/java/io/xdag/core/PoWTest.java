@@ -41,6 +41,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -230,7 +231,11 @@ public class PoWTest {
                 "46a2a0fe035c413d92be9c79a11cfc3695780f66")));
         assertTrue(WalletUtils.checkAddress(hash2PubAddress(hexPubAddress2Hashlow(
                 "46a2a0fe035c413d92be9c79a11cfc3695780f66"))));
+    }
 
-
+    @Test
+    public void generateRandomBytes() {
+        byte[] bytes = BytesUtils.generateRandomBytes(12);
+        Log.info(Arrays.toString(bytes));
     }
 }

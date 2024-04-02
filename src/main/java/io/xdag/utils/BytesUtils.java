@@ -36,6 +36,7 @@ import org.apache.tuweni.units.bigints.UInt64;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.security.SecureRandom;
 
 public class BytesUtils {
 
@@ -135,6 +136,7 @@ public class BytesUtils {
         System.arraycopy(biBytes, start, bytes, numBytes - length, length);
         return bytes;
     }
+
     public static byte[] longToBytes(long b, int numBytes) {
         byte[] bytes = new byte[numBytes];
         byte[] biBytes = long2UnsignedLong(b).bigIntegerValue().toByteArray();
@@ -184,7 +186,7 @@ public class BytesUtils {
 
     /**
      * @param arrays - 字节数组
-     * @param index - 起始索引
+     * @param index  - 起始索引
      * @param length - 长度
      * @return - 子数组
      */
@@ -272,8 +274,8 @@ public class BytesUtils {
     /**
      * 直接将十六进制的byte[]数组转换为都变了的数据
      *
-     * @param input byte[]类型的hash 这里的hash 是正向排序了的
-     * @param offset 偏移位置
+     * @param input        byte[]类型的hash 这里的hash 是正向排序了的
+     * @param offset       偏移位置
      * @param littleEndian 是否为大小端
      */
     public static double hexBytesToDouble(byte[] input, int offset, boolean littleEndian) {
@@ -364,16 +366,25 @@ public class BytesUtils {
         }
     }
 
-    public static MutableBytes32 arrayToByte32(byte[] value){
+    public static MutableBytes32 arrayToByte32(byte[] value) {
         MutableBytes32 mutableBytes32 = MutableBytes32.wrap(new byte[32]);
         mutableBytes32.set(8, Bytes.wrap(value));
         return mutableBytes32;
     }
-    public static byte[] byte32ToArray(MutableBytes32 value){
-        return value.mutableCopy().slice(8,20).toArray();
+
+    public static byte[] byte32ToArray(MutableBytes32 value) {
+        return value.mutableCopy().slice(8, 20).toArray();
     }
 
     public static UnsignedLong long2UnsignedLong(long number) {
-        return UnsignedLong.valueOf(toHexString((ByteBuffer.allocate(8).putLong(number).array())),16);
+        return UnsignedLong.valueOf(toHexString((ByteBuffer.allocate(8).putLong(number).array())), 16);
+    }
+
+    // Randomly generate a byte array of length count
+    public static byte[] generateRandomBytes(int count) {
+        SecureRandom secureRandom = new SecureRandom();
+        byte[] randomBytes = new byte[count];
+        secureRandom.nextBytes(randomBytes);
+        return randomBytes;
     }
 }
