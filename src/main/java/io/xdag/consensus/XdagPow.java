@@ -54,6 +54,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.Random;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -554,13 +555,14 @@ public class XdagPow implements PoW, Listener, Runnable {
                 }
                 if (shareInfo != null) {
                     try {
+                        Random random = new Random();
                         JSONObject shareJson = new JSONObject(shareInfo);
                         if (shareJson.getInt("msgType") == SHARE_FLAG) {
                             receiveNewShare(shareJson.getJSONObject("msgContent").getString("share"),
                                     shareJson.getJSONObject("msgContent").getString("hash"),
                                     shareJson.getJSONObject("msgContent").getLong("taskIndex"),
                                     shareJson.getJSONObject("msgContent").has("poolTag") ? shareJson.getJSONObject(
-                                            "msgContent").getString("poolTag") : "NULL POOL");
+                                            "msgContent").getString("poolTag") : "NULL POOL"+random.nextInt(1000));
                         } else {
                             log.error("Share format error! Current share: {}", shareInfo);
                         }
