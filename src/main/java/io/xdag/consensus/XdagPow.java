@@ -334,7 +334,7 @@ public class XdagPow implements PoW, Listener, Runnable {
 
         RandomXMemory memory = randomXUtils.getGlobalMemory()[(int) randomXUtils.getRandomXPoolMemIndex() & 1];
 
-        Bytes32 preHash = Hash.sha256(block.getXdagBlock().getData().slice(0, 480));
+        Bytes32 preHash = Hash.sha256(block.getXdagBlock().getData().slice(0, 448));
         // task[0]=preHash
         task[0] = new XdagField(preHash.mutableCopy());
         // task[1]=taskSeed
@@ -562,7 +562,7 @@ public class XdagPow implements PoW, Listener, Runnable {
                                     shareJson.getJSONObject("msgContent").getString("hash"),
                                     shareJson.getJSONObject("msgContent").getLong("taskIndex"),
                                     shareJson.getJSONObject("msgContent").has("poolTag") ? shareJson.getJSONObject(
-                                            "msgContent").getString("poolTag") : "NULL POOL"+random.nextInt(1000));
+                                            "msgContent").getString("poolTag") : "NULL POOL" + random.nextInt(1000));
                         } else {
                             log.error("Share format error! Current share: {}", shareInfo);
                         }

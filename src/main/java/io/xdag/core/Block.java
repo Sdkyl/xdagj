@@ -333,6 +333,9 @@ public class Block implements Cloneable {
         for (int i = 0; i < res; i++) {
             encoder.writeField(new byte[32]);
         }
+        if (info.getRemark() != null) {
+            encoder.write(info.getRemark());
+        }
         Bytes32 nonceNotNull = Objects.requireNonNullElse(nonce, Bytes32.ZERO);
         encoder.writeField(nonceNotNull.toArray());
         return encoder.toBytes();
@@ -349,9 +352,6 @@ public class Block implements Cloneable {
         all.addAll(outputs);
         for (Address link : all) {
             encoder.writeField(link.getData().reverse().toArray());
-        }
-        if (info.getRemark() != null) {
-            encoder.write(info.getRemark());
         }
         for (SECPPublicKey publicKey : pubKeys) {
             byte[] pubkeyBytes = publicKey.asEcPoint(Sign.CURVE).getEncoded(true);
