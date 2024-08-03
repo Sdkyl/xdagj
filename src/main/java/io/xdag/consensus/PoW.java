@@ -47,5 +47,5 @@ public interface PoW {
      * Receive and process shares sent by pool
      */
 
-    void receiveNewShare(String share, String hash, long taskIndex);
+    void receiveNewShare(String share, String hash, long taskIndex,String poolTag);
 }

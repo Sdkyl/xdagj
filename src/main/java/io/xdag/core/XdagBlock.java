@@ -24,13 +24,13 @@
 
 package io.xdag.core;
 
-import static io.xdag.core.XdagField.FieldType.fromByte;
-
-import java.nio.ByteOrder;
+import lombok.Getter;
 import org.apache.tuweni.bytes.MutableBytes;
 import org.apache.tuweni.bytes.MutableBytes32;
 
-import lombok.Getter;
+import java.nio.ByteOrder;
+
+import static io.xdag.core.XdagField.FieldType.fromByte;
 
 public class XdagBlock {
 
@@ -107,5 +107,4 @@ public class XdagBlock {
         }
         return data;
     }
-
 }
