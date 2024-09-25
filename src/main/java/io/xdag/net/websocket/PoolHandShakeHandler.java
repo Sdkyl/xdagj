@@ -37,6 +37,7 @@ import io.xdag.consensus.XdagPow;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static io.netty.handler.codec.http.HttpUtil.isKeepAlive;
 import static io.xdag.utils.BasicUtils.extractIpAddress;
@@ -44,12 +45,16 @@ import static io.xdag.utils.BasicUtils.extractIpAddress;
 @Slf4j
 @ChannelHandler.Sharable
 public class PoolHandShakeHandler extends SimpleChannelInboundHandler<Object> {
+    public static final ConcurrentHashMap<ChannelHandlerContext, ShareRateLimiter> rateLimiters = new ConcurrentHashMap<>();
     private WebSocketServerHandshaker handshaker;
     private final int port;
     // pool whitelist
     private final List<String> clientIPList;
     private final XdagPow xdagPow;
     private final boolean allIPAllowed;
+    // Limit the number of shares submitted per epoch to 1,000
+    private static final int MAX_SHARE_COUNT = 1000;
+
 
     public PoolHandShakeHandler(Kernel kernel, List<String> poolWhiteIPList, int port) {
         this.xdagPow = kernel.getPow();
@@ -141,9 +146,17 @@ public class PoolHandShakeHandler extends SimpleChannelInboundHandler<Object> {
             throw new UnsupportedOperationException(String.format(
                     "%s frame types not supported", frame.getClass().getName()));
         }
-
-        if (xdagPow != null) {
-            xdagPow.getSharesFromPools().getShareInfo(((TextWebSocketFrame) frame).text());
+        ShareRateLimiter rateLimiter = rateLimiters.computeIfAbsent(ctx, k -> new ShareRateLimiter(MAX_SHARE_COUNT));
+        // 检查是否超过限额
+        if (rateLimiter.allowRequest()) {
+            if (xdagPow != null) {
+                xdagPow.getSharesFromPools().getShareInfo(((TextWebSocketFrame) frame).text());
+            }
+        } else {
+            // 超过限额，拒绝处理并可以发送警告信息
+            log.warn("Rate limit exceeded for channel: " + ctx.channel().id());
+            // 可以发送一个错误消息回去告知用户限流了
+            ctx.channel().writeAndFlush(new TextWebSocketFrame("Rate limit exceeded. Please try again later."));
         }
     }
 
@@ -164,6 +177,38 @@ public class PoolHandShakeHandler extends SimpleChannelInboundHandler<Object> {
         if (!isKeepAlive(req) || res.status().code() != 200) {
             f.addListener(ChannelFutureListener.CLOSE);
         }
+    }
+
+    public static void resetShareRateLimiter() {
+        rateLimiters.forEach((ctx, rateLimiter) -> rateLimiter.resetRequestCount());
+    }
+
+    private static class ShareRateLimiter {
+        private final int maxRequests;
+        private long requestCount = 0;
+
+
+        public ShareRateLimiter(int maxRequests) {
+            this.maxRequests = maxRequests;
+        }
+
+        public synchronized boolean allowRequest() {
+            if (requestCount >= maxRequests) {
+                return false;
+            }
+            requestCount++;
+            return true;
+        }
+
+        public synchronized void resetRequestCount() {
+            this.requestCount = 0;
+        }
+    }
+
+    @Override
+    public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
+        rateLimiters.remove(ctx);  // 清除限流器
+        super.handlerRemoved(ctx);
     }
 
 }

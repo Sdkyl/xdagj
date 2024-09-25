@@ -35,6 +35,7 @@ import io.xdag.listener.Listener;
 import io.xdag.listener.PretopMessage;
 import io.xdag.net.ChannelManager;
 import io.xdag.net.websocket.ChannelSupervise;
+import io.xdag.net.websocket.PoolHandShakeHandler;
 import io.xdag.pool.PoolAwardManager;
 import io.xdag.utils.BytesUtils;
 import io.xdag.utils.XdagRandomUtils;
@@ -66,6 +67,7 @@ import static io.xdag.utils.BytesUtils.equalBytes;
 
 @Slf4j
 public class XdagPow implements PoW, Listener, Runnable {
+
     private final Kernel kernel;
     protected BlockingQueue<Event> events = new LinkedBlockingQueue<>();
     protected Timer timer;
@@ -137,7 +139,6 @@ public class XdagPow implements PoW, Listener, Runnable {
             timer.isRunning = false;
             broadcaster.isRunning = false;
             sharesFromPools.isRunning = false;
-
         }
     }
 
@@ -151,7 +152,6 @@ public class XdagPow implements PoW, Listener, Runnable {
             }
 
             if (randomXUtils.getRandomXPoolMemIndex() == -1) {
-
                 long switchTime0 = randomXUtils.getGlobalMemory()[0] == null ? 0 : randomXUtils.getGlobalMemory()[0].getSwitchTime();
                 long switchTime1 = randomXUtils.getGlobalMemory()[1] == null ? 0 : randomXUtils.getGlobalMemory()[1].getSwitchTime();
 
@@ -181,6 +181,7 @@ public class XdagPow implements PoW, Listener, Runnable {
         } else {
             generateBlock.set(generateBlock(sendTime));
         }
+        sharesFromPools.shareQueue.clear();
     }
 
 
@@ -194,6 +195,8 @@ public class XdagPow implements PoW, Listener, Runnable {
         block.setNonce(minShare.get());
         minHash.set(Bytes32.fromHexString("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));
         currentTask.set(createTaskByRandomXBlock(block, sendTime));
+        // send new Task
+        PoolHandShakeHandler.resetShareRateLimiter();
         ChannelSupervise.send2Pools(currentTask.get().toJsonString());
         return block;
     }
@@ -209,6 +212,7 @@ public class XdagPow implements PoW, Listener, Runnable {
         // initial nonce
         minHash.set(block.recalcHash());
         currentTask.set(createTaskByNewBlock(block, sendTime));
+        PoolHandShakeHandler.resetShareRateLimiter();
         ChannelSupervise.send2Pools(currentTask.get().toJsonString());
         return block;
     }
@@ -331,19 +335,15 @@ public class XdagPow implements PoW, Listener, Runnable {
     private Task createTaskByRandomXBlock(Block block, long sendTime) {
         Task newTask = new Task();
         XdagField[] task = new XdagField[2];
-
         RandomXMemory memory = randomXUtils.getGlobalMemory()[(int) randomXUtils.getRandomXPoolMemIndex() & 1];
-
-        Bytes32 preHash = Hash.sha256(block.getXdagBlock().getData().slice(0, 448));
+        Bytes32 preHash = Hash.sha256(block.getXdagBlock().getData().slice(0, 480));
         // task[0]=preHash
         task[0] = new XdagField(preHash.mutableCopy());
         // task[1]=taskSeed
         task[1] = new XdagField(MutableBytes.wrap(memory.getSeed()));
-
         newTask.setTask(task);
         newTask.setTaskTime(XdagTime.getEpoch(sendTime));
         newTask.setTaskIndex(taskIndex.get());
-
         return newTask;
     }
 
@@ -356,10 +356,10 @@ public class XdagPow implements PoW, Listener, Runnable {
         XdagField[] task = new XdagField[2];
         task[1] = block.getXdagBlock().getField(14);
 //        byte[] data = new byte[448];
-        MutableBytes data = MutableBytes.create(448);
+        MutableBytes data = MutableBytes.create(480);
 
 //        System.arraycopy(block.getXdagBlock().getData(), 0, data, 0, 448);
-        data.set(0, block.getXdagBlock().getData().slice(0, 448));
+        data.set(0, block.getXdagBlock().getData().slice(0, 480));
 
         XdagSha256Digest currentTaskDigest = new XdagSha256Digest();
         try {
@@ -539,7 +539,7 @@ public class XdagPow implements PoW, Listener, Runnable {
     }
 
     public class GetShares implements Runnable {
-        private final LinkedBlockingQueue<String> shareQueue = new LinkedBlockingQueue<>();
+        private final LinkedBlockingQueue<String> shareQueue = new LinkedBlockingQueue<>(1000000);
         private volatile boolean isRunning = false;
         private static final int SHARE_FLAG = 2;
 
@@ -575,7 +575,6 @@ public class XdagPow implements PoW, Listener, Runnable {
         }
 
         public void getShareInfo(String share) {
-            // todo:Limit the number of shares submitted by each pool within each block production cycle
             if (!shareQueue.offer(share)) {
                 log.error("Failed to get ShareInfo from pools");
             }
