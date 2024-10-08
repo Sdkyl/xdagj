@@ -150,7 +150,7 @@ public class PoolHandShakeHandler extends SimpleChannelInboundHandler<Object> {
         // 检查是否超过限额
         if (rateLimiter.allowRequest()) {
             if (xdagPow != null) {
-                xdagPow.getSharesFromPools().getShareInfo(((TextWebSocketFrame) frame).text());
+                xdagPow.getShareInfo(((TextWebSocketFrame) frame).text());
             }
         } else {
             // 超过限额，拒绝处理并可以发送警告信息

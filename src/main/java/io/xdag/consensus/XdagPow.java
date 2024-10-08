@@ -70,10 +70,11 @@ public class XdagPow implements PoW, Listener, Runnable {
 
     private final Kernel kernel;
     protected BlockingQueue<Event> events = new LinkedBlockingQueue<>();
+    private static final int NUM_CPU_CORES = Runtime.getRuntime().availableProcessors();
+    private volatile boolean isSetMinShare;
+
     protected Timer timer;
     protected Broadcaster broadcaster;
-    @Getter
-    protected GetShares sharesFromPools;
     // 当前区块
     protected AtomicReference<Block> generateBlock = new AtomicReference<>();
     protected AtomicReference<Bytes32> minShare = new AtomicReference<>();
@@ -87,6 +88,7 @@ public class XdagPow implements PoW, Listener, Runnable {
     protected AtomicReference<Task> currentTask = new AtomicReference<>();
     protected AtomicLong taskIndex = new AtomicLong(0L);
     private boolean isWorking = false;
+    private final LinkedBlockingQueue<String> shareQueue = new LinkedBlockingQueue<>(1000000);
 
     private final ExecutorService timerExecutor = Executors.newSingleThreadExecutor(new BasicThreadFactory.Builder()
             .namingPattern("XdagPow-timer-thread")
@@ -99,8 +101,13 @@ public class XdagPow implements PoW, Listener, Runnable {
     private final ExecutorService broadcasterExecutor = Executors.newSingleThreadExecutor(new BasicThreadFactory.Builder()
             .namingPattern("XdagPow-broadcaster-thread")
             .build());
-    private final ExecutorService getSharesExecutor = Executors.newSingleThreadExecutor(new BasicThreadFactory.Builder()
-            .namingPattern("XdagPow-getShares-thread")
+
+    private final ThreadLocal<Bytes32StringPair> threadMinHash = ThreadLocal.withInitial(() ->
+            new Bytes32StringPair(Bytes32.fromHexString("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"), "default"));
+
+
+    ExecutorService consumerGroup = Executors.newFixedThreadPool(NUM_CPU_CORES, new BasicThreadFactory.Builder()
+            .namingPattern("XdagPow-handleShares-thread")
             .build());
 
     protected RandomX randomXUtils;
@@ -114,7 +121,7 @@ public class XdagPow implements PoW, Listener, Runnable {
         this.timer = new Timer();
         this.broadcaster = new Broadcaster();
         this.randomXUtils = kernel.getRandomx();
-        this.sharesFromPools = new GetShares();
+
         this.poolAwardManager = kernel.getPoolAwardManager();
         this.wallet = kernel.getWallet();
 
@@ -124,7 +131,12 @@ public class XdagPow implements PoW, Listener, Runnable {
     public void start() {
         if (!this.isRunning) {
             this.isRunning = true;
-            getSharesExecutor.execute(this.sharesFromPools);
+            this.isSetMinShare = false;
+            for (int i = 0; i < NUM_CPU_CORES; i++) {
+                GetShares getShares = new GetShares();
+                getShares.isRunning = true;
+                consumerGroup.execute(getShares);
+            }
             mainExecutor.execute(this);
             kernel.getPoolAwardManager().start();
             timerExecutor.execute(timer);
@@ -138,7 +150,7 @@ public class XdagPow implements PoW, Listener, Runnable {
             isRunning = false;
             timer.isRunning = false;
             broadcaster.isRunning = false;
-            sharesFromPools.isRunning = false;
+            isSetMinShare = false;
         }
     }
 
@@ -181,7 +193,7 @@ public class XdagPow implements PoW, Listener, Runnable {
         } else {
             generateBlock.set(generateBlock(sendTime));
         }
-        sharesFromPools.shareQueue.clear();
+        shareQueue.clear();
     }
 
 
@@ -278,34 +290,54 @@ public class XdagPow implements PoW, Listener, Runnable {
                 XdagSha256Digest digest = new XdagSha256Digest(task.getDigest());
                 hash = Bytes32.wrap(digest.sha256Final(share.reverse()));
             }
-            synchronized (minHash) {
-                Bytes32 mh = minHash.get();
-                if (compareTo(hash.toArray(), 0, 32, mh.toArray(), 0, 32) < 0) {
-                    log.debug("Receive a hash from pool:{},hash {} is valid.", poolTag, hash.toHexString());
-                    minHash.set(hash);
-                    minShare.set(share);
-                    // put minShare into nonce
-                    Block b = generateBlock.get();
-                    b.setNonce(minShare.get());
-                    // Set mining pool tag
-                    if (StringUtils.isAsciiPrintable(poolTag)) {
-                        byte[] data = poolTag.getBytes(StandardCharsets.UTF_8);
-                        byte[] safeRemark = new byte[32];
-                        Arrays.fill(safeRemark, (byte) 0);
-                        System.arraycopy(data, 0, safeRemark, 0, Math.min(data.length, 32));
-                        b.getInfo().setRemark(safeRemark);
-                    }
-                    log.debug("New MinShare :{}", share.toHexString());
-                    log.debug("New MinHash :{}", hash.toHexString());
-                }
+            if (compareTo(hash.toArray(), 0, 32, minHash.get().toArray(), 0, 32) < 0) {
+                minHash.set(hash);
+                minShare.set(share);
+                Bytes32StringPair poolInfo = threadMinHash.get();
+                poolInfo.setKey(share);
+                poolInfo.setValue(poolTag);
             }
         } catch (Exception e) {
             log.error(e.getMessage(), e);
         }
     }
 
+    protected void setNonce(String poolTag, Bytes32 share) throws IOException {
+        Task task = currentTask.get();
+        Bytes32 hash;
+        // if randomx fork
+        if (kernel.getRandomx().isRandomxFork(task.getTaskTime())) {
+            MutableBytes taskData = MutableBytes.create(64);
+
+            taskData.set(0, task.getTask()[0].getData());// preHash
+            taskData.set(32, share);// share
+            // Calculate hash
+            hash = Bytes32.wrap(kernel.getRandomx()
+                    .randomXPoolCalcHash(taskData, taskData.size(), task.getTaskTime()).reverse());
+        } else {
+            XdagSha256Digest digest = new XdagSha256Digest(task.getDigest());
+            hash = Bytes32.wrap(digest.sha256Final(share.reverse()));
+        }
+        synchronized (minHash) {
+            if (compareTo(hash.toArray(), 0, 32, minHash.get().toArray(), 0, 32) < 0) {
+                minHash.set(hash);
+                minShare.set(share);
+                Block b = generateBlock.get();
+                b.setNonce(minShare.get());
+                if (StringUtils.isAsciiPrintable(poolTag)) {
+                    byte[] data = poolTag.getBytes(StandardCharsets.UTF_8);
+                    byte[] safeRemark = new byte[32];
+                    Arrays.fill(safeRemark, (byte) 0);
+                    System.arraycopy(data, 0, safeRemark, 0, Math.min(data.length, 32));
+                    b.getInfo().setRemark(safeRemark);
+                }
+            }
+        }
+    }
+
 
     protected void onTimeout() {
+        isSetMinShare = true;
         Block b = generateBlock.get();
         // stop generate main block
         isWorking = false;
@@ -322,11 +354,14 @@ public class XdagPow implements PoW, Listener, Runnable {
         isWorking = true;
         // start generate main block
         newBlock();
+        isSetMinShare = false;
     }
 
     protected void onNewPreTop() {
+        isSetMinShare = true;
         log.debug("Receive New PreTop");
         newBlock();
+        isSetMinShare = false;
     }
 
     /**
@@ -539,8 +574,8 @@ public class XdagPow implements PoW, Listener, Runnable {
     }
 
     public class GetShares implements Runnable {
-        private final LinkedBlockingQueue<String> shareQueue = new LinkedBlockingQueue<>(1000000);
-        private volatile boolean isRunning = false;
+
+        private boolean isRunning = false;
         private static final int SHARE_FLAG = 2;
 
         @Override
@@ -571,13 +606,52 @@ public class XdagPow implements PoW, Listener, Runnable {
                         log.error("Share format error, current share: {}", shareInfo);
                     }
                 }
+                if (isSetMinShare) {
+                    // pool last hash
+                    Bytes32StringPair poolInfo = threadMinHash.get();
+                    try {
+                        setNonce(poolInfo.getValue(), poolInfo.getKey());
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                    //init last hash
+                    poolInfo.setKey(Bytes32.fromHexString("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));
+                    poolInfo.setValue("NULL");
+                }
             }
         }
+    }
 
-        public void getShareInfo(String share) {
-            if (!shareQueue.offer(share)) {
-                log.error("Failed to get ShareInfo from pools");
-            }
+    private static class Bytes32StringPair {
+        private Bytes32 key;
+        private String value;
+
+        public Bytes32StringPair(Bytes32 key, String value) {
+            this.key = key;
+            this.value = value;
+        }
+
+        public Bytes32 getKey() {
+            return key;
+        }
+
+        public void setKey(Bytes32 key) {
+            this.key = key;
+        }
+
+        public String getValue() {
+            return value;
+        }
+
+        public void setValue(String value) {
+            this.value = value;
+        }
+    }
+
+
+    public void getShareInfo(String share) {
+        if (!shareQueue.offer(share)) {
+            log.error("Failed to get ShareInfo from pools");
         }
     }
 }
