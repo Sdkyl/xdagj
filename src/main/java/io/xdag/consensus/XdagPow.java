@@ -151,6 +151,7 @@ public class XdagPow implements PoW, Listener, Runnable {
             timer.isRunning = false;
             broadcaster.isRunning = false;
             isSetMinShare = false;
+            consumerGroup.shutdown();
         }
     }
 
